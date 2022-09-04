@@ -1,3 +1,3 @@
 
-rootProject.name = "NPG2MP4"
+rootProject.name = "PNG2MP4"
 

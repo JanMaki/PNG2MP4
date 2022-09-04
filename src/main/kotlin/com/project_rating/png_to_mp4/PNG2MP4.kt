@@ -11,6 +11,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.file.Paths
+import java.util.SortedSet
 import javax.imageio.ImageIO
 
 fun main(args: Array<String>) {
@@ -20,10 +21,20 @@ fun main(args: Array<String>) {
         return
     }
 
-    PNG2MP4(args[0])
+    //レートを取得
+    val rate = if (args.size < 2){
+        //20秒
+        20
+    }else {
+        //引数から持ってくる
+        args[1].toInt()
+    }
+
+    //開始
+    PNG2MP4(args[0], rate)
 }
 
-class PNG2MP4(token: String) {
+class PNG2MP4(token: String, rate: Int) {
     init {
 
         //jarがあるディレクトリ
@@ -45,21 +56,50 @@ class PNG2MP4(token: String) {
         //変換開始
         println("変換を開始")
         try {
+            //ファイル名をのリスト
+            val files = arrayListOf<String>()
+
             client.files().listFolder("").entries.forEach {
                 //pngかを確認
                 if (!it.name.endsWith("png")) return@forEach
 
+                //ファイル一覧に追加
+                files.add(it.name)
+            }
+
+
+            //動画が複数枚で構成されるファイルを保管
+            val multiImageFiles = hashMapOf<String, SortedSet<String>>()
+
+            //_1.pngなどで終わるパターン
+            val multiImagePattern = Regex("_\\d+.png")
+
+            //ファイルを全て確認
+            files.forEach{
+                //パターンと照合
+                if (it.contains(multiImagePattern)){
+                    //ソートされるSetに追加
+                    multiImageFiles.getOrPut(it.replace(multiImagePattern, "_1.png")) { sortedSetOf() }.add(it)
+                }
+            }
+
+            //複数枚で構成されるファイルを削除
+            files.removeAll(multiImageFiles.values.flatten().toSet())
+
+            //単フレームの画像の処理
+            println("単フレームのファイルの処理を開始")
+            files.forEach{
                 //pngのFile
-                val imageFile = File(cacheDirectory, it.name)
+                val imageFile = File(cacheDirectory, it)
 
                 //ダウンロード
-                println("${it.name}をダウンロード")
+                println("${it}をダウンロード")
                 var outputStream: FileOutputStream? = null
                 try {
                     //ストリームを作成
                     outputStream = FileOutputStream(imageFile).apply {
                         //ダウンロード
-                        client.files().download("/${it.name}").download(this)
+                        client.files().download("/${it}").download(this)
                     }
                 } catch (ignore: Exception) {
                     println("ダウンロードに失敗しました")
@@ -69,11 +109,11 @@ class PNG2MP4(token: String) {
                 }
 
                 //mp4への変換
-                println("${it.name}を変換開始")
+                println("${it}を変換開始")
                 //画像を読み込み
                 val bufferImage = ImageIO.read(imageFile)
                 //mp4のファイル
-                val videoFileName = it.name.replace("png", "mp4")
+                val videoFileName = it.replace("png", "mp4")
                 val videoFile = File(cacheDirectory, videoFileName)
                 //エンコーダー
                 val encoder = SequenceEncoder.createSequenceEncoder(videoFile, 1)
@@ -94,10 +134,68 @@ class PNG2MP4(token: String) {
                     client.files().uploadBuilder("/${videoFileName}").withMode(WriteMode.OVERWRITE).uploadAndFinish(it)
                 }
 
-                println("${it.name}の変換終了")
+                println("${it}の変換終了")
+            }
+
+
+            //複数枚の画像の処理
+            println("スライドショー式のファイルを処理開始")
+            multiImageFiles.forEach keyForEach@{ it ->
+                //mp4のファイル
+                val videoFileName = it.key.replace(multiImagePattern, ".mp4")
+                val videoFile = File(cacheDirectory, videoFileName)
+                //エンコーダー
+                val encoder = SequenceEncoder.createSequenceEncoder(videoFile, 1)
+
+                it.value.forEach{fileName->
+                    //pngのFile
+                    val imageFile = File(cacheDirectory, fileName)
+
+                    //ダウンロード
+                    println("${fileName}をダウンロード")
+                    var outputStream: FileOutputStream? = null
+                    try {
+                        //ストリームを作成
+                        outputStream = FileOutputStream(imageFile).apply {
+                            //ダウンロード
+                            client.files().download("/${fileName}").download(this)
+                        }
+                    } catch (ignore: Exception) {
+                        println("ダウンロードに失敗しました")
+                        return@keyForEach
+                    } finally {
+                        outputStream?.close()
+                    }
+
+                    //mp4への変換
+                    println("${fileName}を変換開始")
+                    //画像を読み込み
+                    val bufferImage = ImageIO.read(imageFile)
+                    //フレームをエンコーダーに追加
+                    val picture = AWTUtil.fromBufferedImage(bufferImage, ColorSpace.RGB)
+                    //秒数分フレームを入れる
+                    for (i in 0 until rate) {
+                        encoder.encodeNativeFrame(picture)
+                    }
+                }
+
+                //エンコード
+                encoder.finish()
+                println("${videoFileName}を作成完了")
+
+                //アップロード
+                println("${videoFileName}をアップロード")
+                //ストリーム作成
+                FileInputStream(videoFile).let {
+                    //送信
+                    client.files().uploadBuilder("/${videoFileName}").withMode(WriteMode.OVERWRITE).uploadAndFinish(it)
+                }
+
+                println("${it.key.replace(multiImagePattern, ".png")}=${it.value}の変換終了")
             }
         }catch (e: BadRequestException) {
             println("DropBoxへのリクエストが失敗しました")
+            e.printStackTrace()
         }
 
         println("-- 終了しました --")

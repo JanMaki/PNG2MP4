@@ -27,7 +27,7 @@ tasks.withType<KotlinCompile> {
 
 val jar by tasks.getting(Jar::class) {
     manifest {
-        attributes["Main-Class"] = "com.project_rating.png_to_mp4.PNG2MP4"
+        attributes["Main-Class"] = "com.project_rating.png_to_mp4.PNG2MP4Kt"
     }
 
     from(configurations.runtimeClasspath.get().map {
