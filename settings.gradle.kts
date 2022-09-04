@@ -1,3 +1,3 @@
 
-rootProject.name = "BitVideoEncoder"
+rootProject.name = "NPG2MP4"
 
