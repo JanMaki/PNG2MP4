@@ -4,15 +4,14 @@ import com.dropbox.core.BadRequestException
 import com.dropbox.core.DbxRequestConfig
 import com.dropbox.core.v2.DbxClientV2
 import com.dropbox.core.v2.files.WriteMode
-import org.jcodec.api.SequenceEncoder
-import org.jcodec.common.model.ColorSpace
-import org.jcodec.scale.AWTUtil
+import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_H264
+import org.bytedeco.javacv.FFmpegFrameGrabber
+import org.bytedeco.javacv.FFmpegFrameRecorder
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.file.Paths
-import java.util.SortedSet
-import javax.imageio.ImageIO
+import java.util.*
 
 fun main(args: Array<String>) {
     //引数があるかを確認
@@ -111,19 +110,39 @@ class PNG2MP4(token: String, rate: Int) {
                 //mp4への変換
                 println("${it}を変換開始")
                 //画像を読み込み
-                val bufferImage = ImageIO.read(imageFile)
+                val imageFileGrabber = FFmpegFrameGrabber(imageFile).apply {
+                    //開始
+                    start()
+                }
+
                 //mp4のファイル
-                val videoFileName = it.replace("png", "mp4")
+                val videoFileName = it.replace(".png", ".mp4")
                 val videoFile = File(cacheDirectory, videoFileName)
-                //エンコーダー
-                val encoder = SequenceEncoder.createSequenceEncoder(videoFile, 1)
-                //フレームをエンコーダーに追加
-                val picture = AWTUtil.fromBufferedImage(bufferImage, ColorSpace.RGB)
-                //2フレーム入れる
-                encoder.encodeNativeFrame(picture)
-                encoder.encodeNativeFrame(picture)
-                //エンコード
-                encoder.finish()
+
+                //レコーダーを作成
+                val recorder =
+                    FFmpegFrameRecorder(videoFile, imageFileGrabber.imageWidth, imageFileGrabber.imageHeight).apply {
+                        //各種値を設定
+                        videoCodec = AV_CODEC_ID_H264
+                        sampleRate = 1
+                        frameRate = 1.0
+                        videoQuality = 1.0
+                        format = "mp4"
+                        timestamp = 2
+                        //レコーダーを開始
+                        start()
+                    }
+
+                //フレームのデータ
+                val frame = imageFileGrabber.grab()
+                //2フレーム言える
+                recorder.record(frame)
+                recorder.record(frame)
+
+                //画像の処理を終了
+                imageFileGrabber.close()
+                //レコーダーを終了
+                recorder.close()
                 println("${videoFileName}を作成完了")
 
                 //アップロード
@@ -144,10 +163,11 @@ class PNG2MP4(token: String, rate: Int) {
                 //mp4のファイル
                 val videoFileName = it.key.replace(multiImagePattern, ".mp4")
                 val videoFile = File(cacheDirectory, videoFileName)
-                //エンコーダー
-                val encoder = SequenceEncoder.createSequenceEncoder(videoFile, 1)
 
-                it.value.forEach{fileName->
+                //レコーダー
+                var recorder: FFmpegFrameRecorder? = null
+
+                it.value.forEach { fileName ->
                     //pngのFile
                     val imageFile = File(cacheDirectory, fileName)
 
@@ -170,17 +190,42 @@ class PNG2MP4(token: String, rate: Int) {
                     //mp4への変換
                     println("${fileName}を変換開始")
                     //画像を読み込み
-                    val bufferImage = ImageIO.read(imageFile)
-                    //フレームをエンコーダーに追加
-                    val picture = AWTUtil.fromBufferedImage(bufferImage, ColorSpace.RGB)
+                    val imageFileGrabber = FFmpegFrameGrabber(imageFile).apply {
+                        //開始
+                        start()
+                    }
+
+                    //レコーダーが存在するかを確認
+                    if (recorder == null) {
+                        //レコーダーを作成
+                        recorder = FFmpegFrameRecorder(
+                            videoFile,
+                            imageFileGrabber.imageWidth,
+                            imageFileGrabber.imageHeight
+                        ).apply {
+                            //各種値を設定
+                            videoCodec = AV_CODEC_ID_H264
+                            frameRate = 1.0
+                            videoQuality = 1.0
+                            format = "mp4"
+                            //レコーダーを開始
+                            start()
+                        }
+                    }
+
+                    //フレームのデータ
+                    val frame = imageFileGrabber.grab()
                     //秒数分フレームを入れる
                     for (i in 0 until rate) {
-                        encoder.encodeNativeFrame(picture)
+                        recorder!!.record(frame)
                     }
+
+                    //画像の処理を終了
+                    imageFileGrabber.close()
                 }
 
-                //エンコード
-                encoder.finish()
+                //レコーダーを終了
+                recorder?.close()
                 println("${videoFileName}を作成完了")
 
                 //アップロード
@@ -199,6 +244,5 @@ class PNG2MP4(token: String, rate: Int) {
         }
 
         println("-- 終了しました --")
-
     }
 }

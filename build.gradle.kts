@@ -13,9 +13,8 @@ repositories {
 }
 
 dependencies {
-    //JCodec
-    implementation("org.jcodec", "jcodec", "0.2.5")
-    implementation("org.jcodec:jcodec-javase:0.2.5")
+    //JavaCV
+    implementation("org.bytedeco", "javacv-platform", "1.5.7")
 
     //DropBox
     implementation("com.dropbox.core", "dropbox-core-sdk", "5.3.0")
