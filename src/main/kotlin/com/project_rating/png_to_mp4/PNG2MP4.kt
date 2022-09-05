@@ -2,7 +2,9 @@ package com.project_rating.png_to_mp4
 
 import com.dropbox.core.BadRequestException
 import com.dropbox.core.DbxRequestConfig
+import com.dropbox.core.InvalidAccessTokenException
 import com.dropbox.core.v2.DbxClientV2
+import com.dropbox.core.v2.auth.AuthError
 import com.dropbox.core.v2.files.WriteMode
 import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_H264
 import org.bytedeco.javacv.FFmpegFrameGrabber
@@ -238,8 +240,15 @@ class PNG2MP4(token: String, rate: Int) {
 
                 println("${it.key.replace(multiImagePattern, ".png")}=${it.value}の変換終了")
             }
-        }catch (e: BadRequestException) {
+        } catch (e: BadRequestException) {
             println("DropBoxへのリクエストが失敗しました")
+            e.printStackTrace()
+        } catch (e: InvalidAccessTokenException) {
+            if (e.authError == AuthError.EXPIRED_ACCESS_TOKEN) {
+                println("DropBoxのトークンが期限切れです\nDropBoxのアプリコンソールより、トークンを取得し直してください")
+            } else {
+                println("DropBoxのトークンが無効です\nDropBoxのアプリコンソールより、トークンを取得し直してください")
+            }
             e.printStackTrace()
         }
 
