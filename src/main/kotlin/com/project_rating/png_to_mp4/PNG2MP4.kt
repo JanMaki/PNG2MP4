@@ -9,6 +9,9 @@ import com.dropbox.core.v2.files.WriteMode
 import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_H264
 import org.bytedeco.javacv.FFmpegFrameGrabber
 import org.bytedeco.javacv.FFmpegFrameRecorder
+import org.bytedeco.javacv.Java2DFrameConverter
+import java.awt.AlphaComposite
+import java.awt.image.BufferedImage
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -17,25 +20,63 @@ import java.util.*
 
 fun main(args: Array<String>) {
     //引数があるかを確認
-    if (args.isEmpty()){
+    if (args.isEmpty()) {
         println("第１引数にDropBoxのTokenを入力してください")
         return
     }
 
-    //レートを取得
-    val rate = if (args.size < 2){
-        //20秒
-        20
-    }else {
-        //引数から持ってくる
-        args[1].toInt()
+    //1枚あたりのレート
+    var rate = 20
+    //フェード時間
+    var fade = 0
+    //FPS
+    var fps = -1
+
+    //引数を確認
+    args.forEach {
+        //レート
+        if (it.startsWith("rate=")) {
+            rate = it.replace("rate=", "").toInt()
+            println("1枚当たりの時間を${rate}秒にしました")
+        }
+        //フェード
+        if (it.startsWith("fade=")) {
+            fade = it.replace("fade=", "").toInt()
+            println("フェード時間を${fade}秒にしました")
+        }
+        //fps
+        if (it.startsWith("fps=")) {
+            fps = it.replace("fps=", "").toInt()
+            println("動画のフレームレートを${fps}にしました")
+        }
+    }
+
+    //fpsが初期値化を確認
+    if (fps == -1) {
+        //fpsが必要じゃない時
+        fps = if (fade == 0) {
+            //1にする
+            1
+        } else {
+            //30にする
+            30
+        }
     }
 
     //開始
-    PNG2MP4(args[0], rate)
+    PNG2MP4(args[0], rate, fade, fps)
 }
 
-class PNG2MP4(token: String, rate: Int) {
+/**
+ * PNGをMP4に変換する
+ *
+ *
+ * @param token DropBoxのToken
+ * @param rate スライドショー時の1枚当たりの時間
+ * @param fade フェードにかける時間  0だとフェードなし
+ * @param fps スライドショーのフレームレート
+ */
+class PNG2MP4(token: String, rate: Int, private val fade: Int, private val fps: Int) {
     init {
 
         //jarがあるディレクトリ
@@ -126,7 +167,6 @@ class PNG2MP4(token: String, rate: Int) {
                     FFmpegFrameRecorder(videoFile, imageFileGrabber.imageWidth, imageFileGrabber.imageHeight).apply {
                         //各種値を設定
                         videoCodec = AV_CODEC_ID_H264
-                        sampleRate = 1
                         frameRate = 1.0
                         videoQuality = 1.0
                         format = "mp4"
@@ -169,7 +209,14 @@ class PNG2MP4(token: String, rate: Int) {
                 //レコーダー
                 var recorder: FFmpegFrameRecorder? = null
 
-                it.value.forEach { fileName ->
+                //フェード用
+                var startImage: BufferedImage? = null
+                var beforeImage: BufferedImage? = null
+
+                it.value.withIndex().forEach { indexedValue ->
+                    val index = indexedValue.index
+                    val fileName = indexedValue.value
+
                     //pngのFile
                     val imageFile = File(cacheDirectory, fileName)
 
@@ -207,7 +254,8 @@ class PNG2MP4(token: String, rate: Int) {
                         ).apply {
                             //各種値を設定
                             videoCodec = AV_CODEC_ID_H264
-                            frameRate = 1.0
+                            // フェードがある時は30fpsにする
+                            frameRate = fps.toDouble()
                             videoQuality = 1.0
                             format = "mp4"
                             //レコーダーを開始
@@ -217,13 +265,37 @@ class PNG2MP4(token: String, rate: Int) {
 
                     //フレームのデータ
                     val frame = imageFileGrabber.grab()
+
+                    //フェードを行う
+                    if (fade != 0) {
+                        //最初の画像の場合
+                        if (index == 0) {
+                            //最初のフレーム
+                            startImage = Java2DFrameConverter().convert(frame)
+                        } else {
+                            //フレームをBufferImageに
+                            val frameBufferImage = Java2DFrameConverter().convert(frame)
+
+                            //フェードを入れる
+                            recordFade(recorder!!, beforeImage!!, frameBufferImage)
+                        }
+                        //1個前のフレームとして記録
+                        beforeImage = Java2DFrameConverter().convert(frame)
+                    }
+
                     //秒数分フレームを入れる
-                    for (i in 0 until rate) {
+                    for (i in 0 until rate * fps) {
                         recorder!!.record(frame)
                     }
 
                     //画像の処理を終了
                     imageFileGrabber.close()
+                }
+
+                //最初に戻るフェードが必要かを確認
+                if (startImage != null && beforeImage != null && startImage != beforeImage) {
+                    //フェードを入れる
+                    recordFade(recorder!!, beforeImage!!, startImage!!)
                 }
 
                 //レコーダーを終了
@@ -253,5 +325,35 @@ class PNG2MP4(token: String, rate: Int) {
         }
 
         println("-- 終了しました --")
+    }
+
+
+    /**
+     * 2枚の画像からフェードをレコードする
+     *
+     * @param recorder レコーダー
+     * @param baseImage 元画像
+     * @param overlapImage 重ねる画像
+     */
+    private fun recordFade(recorder: FFmpegFrameRecorder, baseImage: BufferedImage, overlapImage: BufferedImage) {
+        //fps*秒数 回繰り返す
+        for (i in 0 until (fps * fade)) {
+            val image = BufferedImage(baseImage.width, baseImage.height, baseImage.type).apply {
+                data = baseImage.data
+            }
+            //Graphics2Dを作成
+            val graphics = image.createGraphics()
+            //透明度を設定
+            graphics.composite = AlphaComposite.getInstance(
+                AlphaComposite.SRC_OVER,
+                (1.0 / (fps * fade) * i).toFloat()
+            )
+            //合成
+            graphics.drawImage(overlapImage, 0, 0, null)
+            //フレームを入れる
+            recorder.record(Java2DFrameConverter().convert(image))
+            //破棄
+            graphics.dispose()
+        }
     }
 }
