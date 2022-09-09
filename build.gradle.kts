@@ -16,8 +16,8 @@ dependencies {
     //JavaCV
     implementation("org.bytedeco", "javacv-platform", "1.5.7")
 
-    //DropBox
-    implementation("com.dropbox.core", "dropbox-core-sdk", "5.3.0")
+    //Git
+    implementation("com.github.sya-ri", "kgit", "1.0.5")
 }
 
 tasks.withType<KotlinCompile> {
