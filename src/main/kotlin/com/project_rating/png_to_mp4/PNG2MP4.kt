@@ -5,13 +5,17 @@ import org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_H264
 import org.bytedeco.javacv.FFmpegFrameGrabber
 import org.bytedeco.javacv.FFmpegFrameRecorder
 import org.bytedeco.javacv.Java2DFrameConverter
+import org.eclipse.jgit.api.errors.RefNotAdvertisedException
 import org.eclipse.jgit.errors.RepositoryNotFoundException
 import org.eclipse.jgit.transport.URIish
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import java.awt.AlphaComposite
 import java.awt.image.BufferedImage
 import java.io.File
+import java.io.FileWriter
 import java.nio.file.Paths
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
 import java.util.*
 
 fun main(args: Array<String>) {
@@ -99,33 +103,36 @@ class PNG2MP4(token: String, url: String, rate: Int, private val fade: Int, priv
         } catch (e: RepositoryNotFoundException) {
             //初期化の処理
             println("初期化中")
-            KGit.init {
-                //ディレクトリを設定
-                setDirectory(cacheDirectory)
-                //Gitのディレクトリを設定
-                setGitDir(File(cacheDirectory, ".git"))
-            }
-            //クローン
-            println("クローン中...")
-            KGit.cloneRepository {
-                //ディレクトリを設定
-                setDirectory(cacheDirectory)
-                //Gitのディレクトリを設定
-                setGitDir(File(cacheDirectory, ".git"))
-                //リモートディレクトリを設定
-                setURI(url)
-                //タイムアウト時間
-                setTimeout(60)
-                //Tokenによるログイン
-                setCredentialsProvider(UsernamePasswordCredentialsProvider(token, ""))
+            try {
+                KGit.cloneRepository {
+                    //ディレクトリを設定
+                    setDirectory(cacheDirectory)
+                    //Gitのディレクトリを設定
+                    setGitDir(File(cacheDirectory, ".git"))
+                    //リモートディレクトリを設定
+                    setURI(url)
+                    //タイムアウト時間
+                    setTimeout(60)
+                    //Tokenによるログイン
+                    setCredentialsProvider(UsernamePasswordCredentialsProvider(token, ""))
+                }
+            } catch (e: RefNotAdvertisedException) {
+                KGit.init {
+                    //ディレクトリを設定
+                    setDirectory(cacheDirectory)
+                    //Gitのディレクトリを設定
+                    setGitDir(File(cacheDirectory, ".git"))
+                }
             }
         }
 
-        //プル
-        git.pull {
-            //Tokenによるログイン
-            setCredentialsProvider(UsernamePasswordCredentialsProvider(token, ""))
-        }
+        try {
+            //プル
+            git.pull {
+                //Tokenによるログイン
+                setCredentialsProvider(UsernamePasswordCredentialsProvider(token, ""))
+            }
+        } catch (ignore: RefNotAdvertisedException) {}
 
         //リモートを設定
         git.remoteAdd {
@@ -158,6 +165,8 @@ class PNG2MP4(token: String, url: String, rate: Int, private val fade: Int, priv
 
         //複数枚で構成されるファイルを削除
         files.removeAll(multiImageFiles.values.flatten().toSet())
+
+        val videoFiles = mutableListOf<String>()
 
         //単フレームの画像の処理
         println("単フレームのファイルの処理を開始")
@@ -208,6 +217,9 @@ class PNG2MP4(token: String, url: String, rate: Int, private val fade: Int, priv
                 //ファイルを指定
                 addFilepattern(videoFileName)
             }
+
+            //ビデオのファイル一覧に追加
+            videoFiles.add(videoFileName)
 
             println("${it}の変換終了")
         }
@@ -306,12 +318,37 @@ class PNG2MP4(token: String, url: String, rate: Int, private val fade: Int, priv
                 addFilepattern(videoFileName)
             }
 
+            //ビデオのファイル一覧に追加
+            videoFiles.add(videoFileName)
+
             println("${it.key.replace(multiImagePattern, ".png")}=${it.value}の変換終了")
         }
 
+        println("indexの作成開始")
+        //htmlを錬成
+        val html =
+            "<html><body>${videoFiles.joinToString { "<p><a href=/${it}>${it}</a></p><p><video  controls width=\"250\"><source src=/${it} type=\"video/mp4\"></video></p>" }}</body></html>"
+        //index.htmlファイルを書き込み
+        FileWriter(File(cacheDirectory, "index.html")).apply {
+            //htmlを書き込み
+            write(html)
+            //終了
+            close()
+        }
+
+        //Gitに追加
+        git.add {
+            //ファイルを指定
+            addFilepattern("index.html")
+        }
+        println("indexの作成終了")
+
+
         //コミット
         git.commit {
-            message = "PNG2MP4 update ()"
+            //コミットメッセージに時間をつける
+            message =
+                "PNG2MP4 update (${SimpleDateFormat("yyyy.MM.dd.HH.mm.ss").format(Timestamp(System.currentTimeMillis()))})"
         }
 
         //プッシュ
